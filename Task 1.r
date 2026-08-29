@@ -123,20 +123,15 @@ unmatched_events
 
 # Create a trading-day index for each firm
 crsp_indexed <- crsp_data %>%
-
+  arrange(PERMNO, DLYCALDT) %>%
   group_by(PERMNO) %>%
-
-  arrange(DLYCALDT, .by_group = TRUE) %>%
-
   mutate(
     trading_day_index = row_number()
   ) %>%
-
   ungroup()
 
 # Find the trading-day index corresponding to Day 0
 day0_index <- seo_events_matched %>%
-
   select(
     SEO_ID,
     PERMNO,
@@ -160,7 +155,6 @@ day0_index <- seo_events_matched %>%
   rename(
     day0_index = trading_day_index
   )
-
 # Match every SEO to the firm's trading history
 
 # Each SEO now receives a copy of the relevant firm's daily history. This is necessary because one PERMNO may have more 
@@ -194,7 +188,15 @@ event_history <- seo_events_matched %>%
         day0_index
       ),
     by = "SEO_ID"
+  ) %>%
+
+  mutate(
+    event_day = trading_day_index - day0_index
   )
+
+event_history %>%
+  count(SEO_ID, event_day) %>%
+  filter(n > 1)
 
 # 13. Calculate relative trading day
 # ------------------------------------------------------------
@@ -477,3 +479,428 @@ write_csv(
     "outputs/task1_events_by_year_sample.csv"
   )
 )
+
+
+# ============================================================
+# TASK 2: CONSTRUCT EVENT WINDOWS
+# ============================================================
+
+
+# ------------------------------------------------------------
+# 1. Construct the wide event window (-10, +10)
+# ------------------------------------------------------------
+
+wide_window <- event_history %>%
+  filter(
+    event_day >= -10,
+    event_day <= 10
+  ) %>%
+  arrange(
+    SEO_ID,
+    event_day
+  )
+
+
+# Preview the wide window
+wide_window %>%
+  select(
+    SEO_ID,
+    PERMNO,
+    filing_dt,
+    day0_date,
+    DLYCALDT,
+    event_day,
+    DLYRET,
+    SPRTRN
+  ) %>%
+  head(25)
+
+# ------------------------------------------------------------
+# 2. Construct the tight event window (-2, +2)
+# ------------------------------------------------------------
+
+tight_window <- event_history %>%
+  filter(
+    event_day >= -2,
+    event_day <= 2
+  ) %>%
+  arrange(
+    SEO_ID,
+    event_day
+  )
+
+
+# Preview the tight window
+tight_window %>%
+  select(
+    SEO_ID,
+    PERMNO,
+    filing_dt,
+    day0_date,
+    DLYCALDT,
+    event_day,
+    DLYRET,
+    SPRTRN
+  ) %>%
+  head(20)
+
+  # ------------------------------------------------------------
+# 3. Check completeness of tight window
+# ------------------------------------------------------------
+
+tight_window_check <- tight_window %>%
+  group_by(SEO_ID) %>%
+  summarise(
+
+    # Number of unique event days
+    n_event_days = n_distinct(event_day),
+
+    # Earliest and latest event days
+    min_event_day = min(event_day),
+    max_event_day = max(event_day),
+
+    # Check whether all five required days exist
+    has_all_required_days =
+      all(c(-2, -1, 0, 1, 2) %in% event_day),
+
+    # Check whether stock returns are available
+    no_missing_stock_returns =
+      all(!is.na(DLYRET)),
+
+    # Check whether market returns are available
+    no_missing_market_returns =
+      all(!is.na(SPRTRN)),
+
+    .groups = "drop"
+  ) %>%
+
+  mutate(
+
+    # Event is eligible only if the complete five-day
+    # tight window is available
+    complete_tight =
+      n_event_days == 5 &
+      min_event_day == -2 &
+      max_event_day == 2 &
+      has_all_required_days &
+      no_missing_stock_returns &
+      no_missing_market_returns
+  )
+
+  table(tight_window_check$complete_tight)
+
+  number_complete_tight <- sum(
+  tight_window_check$complete_tight
+)
+
+number_complete_tight
+
+
+# ------------------------------------------------------------
+# 4. Identify events with incomplete tight windows
+# ------------------------------------------------------------
+
+ineligible_tight_events <- tight_window_check %>%
+  filter(!complete_tight)
+
+ineligible_tight_events
+
+nrow(ineligible_tight_events)
+
+# ------------------------------------------------------------
+# 5. Identify eligible SEO events
+# ------------------------------------------------------------
+
+eligible_events <- tight_window_check %>%
+  filter(complete_tight) %>%
+  select(SEO_ID)
+
+  tight_window_final <- tight_window %>%
+  semi_join(
+    eligible_events,
+    by = "SEO_ID"
+  )
+
+  n_distinct(tight_window_final$SEO_ID)
+nrow(tight_window_final)
+
+nrow(tight_window_final) ==
+  n_distinct(tight_window_final$SEO_ID) * 5
+
+
+  # ------------------------------------------------------------
+# 6. Check completeness of wide window
+# ------------------------------------------------------------
+
+wide_window_check <- wide_window %>%
+  group_by(SEO_ID) %>%
+  summarise(
+
+    n_event_days = n_distinct(event_day),
+
+    min_event_day = min(event_day),
+    max_event_day = max(event_day),
+
+    has_all_required_days =
+      all((-10:10) %in% event_day),
+
+    no_missing_stock_returns =
+      all(!is.na(DLYRET)),
+
+    no_missing_market_returns =
+      all(!is.na(SPRTRN)),
+
+    .groups = "drop"
+  ) %>%
+
+  mutate(
+
+    complete_wide =
+      n_event_days == 21 &
+      min_event_day == -10 &
+      max_event_day == 10 &
+      has_all_required_days &
+      no_missing_stock_returns &
+      no_missing_market_returns
+  )
+
+  table(wide_window_check$complete_wide)
+
+  number_complete_wide <- sum(
+  wide_window_check$complete_wide
+)
+
+number_complete_wide
+
+
+wide_window_check %>%
+  filter(!complete_wide)
+
+  incomplete_wide_ids <- wide_window_check %>%
+  filter(!complete_wide) %>%
+  pull(SEO_ID)
+
+wide_window %>%
+  filter(
+    SEO_ID %in% incomplete_wide_ids
+  ) %>%
+  select(
+    SEO_ID,
+    PERMNO,
+    Issuer_Borrower_Name_Full,
+    filing_dt,
+    DLYCALDT,
+    event_day,
+    DLYRET,
+    SPRTRN
+  ) %>%
+  arrange(
+    SEO_ID,
+    event_day
+  )
+
+# ------------------------------------------------------------
+# 7. Check for duplicate event-day observations
+# ------------------------------------------------------------
+
+event_day_duplicates <- event_history %>%
+  count(
+    SEO_ID,
+    event_day
+  ) %>%
+  filter(n > 1)
+
+event_day_duplicates
+
+nrow(event_day_duplicates)
+
+
+# ------------------------------------------------------------
+# 8. Task 2 summary table
+# ------------------------------------------------------------
+
+task2_summary <- tibble(
+
+  Statistic = c(
+    "Total SEO events",
+    "Events with complete tight window (-2,+2)",
+    "Events excluded due to incomplete tight window",
+    "Events with complete wide window (-10,+10)",
+    "Events with incomplete wide window (-10,+10)"
+  ),
+
+  Value = c(
+    n_distinct(seo_events_matched$SEO_ID),
+
+    sum(
+      tight_window_check$complete_tight
+    ),
+
+    sum(
+      !tight_window_check$complete_tight
+    ),
+
+    sum(
+      wide_window_check$complete_wide
+    ),
+
+    sum(
+      !wide_window_check$complete_wide
+    )
+  )
+)
+
+task2_summary
+
+
+# ------------------------------------------------------------
+# 9. Save Task 2 outputs
+# ------------------------------------------------------------
+
+write_csv(
+  tight_window_final,
+  "outputs/task2_tight_window.csv"
+)
+
+write_csv(
+  wide_window,
+  "outputs/task2_wide_window.csv"
+)
+
+write_csv(
+  task2_summary,
+  "outputs/task2_summary.csv"
+)
+
+
+# ============================================================
+# TASK 3: ABNORMAL RETURNS AND CUMULATIVE ABNORMAL RETURNS
+# Wide Event Window (-10, +10)
+# ============================================================
+
+
+# ------------------------------------------------------------
+# 1. Calculate abnormal return for every event-day observation
+# ------------------------------------------------------------
+
+# AR_i,t = stock return - market return
+
+wide_window <- wide_window %>%
+  mutate(
+    AR = DLYRET - SPRTRN
+  )
+
+
+# Inspect the result
+wide_window %>%
+  select(
+    SEO_ID,
+    PERMNO,
+    event_day,
+    DLYCALDT,
+    DLYRET,
+    SPRTRN,
+    AR
+  ) %>%
+  arrange(SEO_ID, event_day) %>%
+  head(25)
+
+  # ------------------------------------------------------------
+# 2. Calculate day-by-day abnormal-return statistics
+# ------------------------------------------------------------
+
+task3_table <- wide_window %>%
+
+  group_by(event_day) %>%
+
+  summarise(
+
+    # Number of events contributing a valid abnormal return
+    N = sum(!is.na(AR)),
+
+    # Mean abnormal return
+    mean_AR = mean(
+      AR,
+      na.rm = TRUE
+    ),
+
+    # Standard deviation of abnormal returns
+    sd_AR = sd(
+      AR,
+      na.rm = TRUE
+    ),
+
+    # Standard error of mean AR
+    se_AR = sd_AR / sqrt(N),
+
+    # t-statistic for H0: mean AR = 0
+    t_stat = mean_AR / se_AR,
+
+    # Two-sided p-value
+    p_value = 2 * pt(
+      -abs(t_stat),
+      df = N - 1
+    ),
+
+    .groups = "drop"
+  ) %>%
+
+  arrange(event_day) %>%
+
+  # Cumulative average abnormal return
+  mutate(
+    CAR = cumsum(mean_AR)
+  )
+
+  task3_table
+
+# ------------------------------------------------------------
+# 3. Create report-ready Task 3 table
+# ------------------------------------------------------------
+
+task3_report_table <- task3_table %>%
+  transmute(
+
+    `Event Day` = event_day,
+
+    `N` = N,
+
+    `Mean AR (%)` = round(
+      mean_AR * 100,
+      3
+    ),
+
+    `t-statistic` = round(
+      t_stat,
+      3
+    ),
+
+    `p-value` = round(
+      p_value,
+      4
+    ),
+
+    `CAR (%)` = round(
+      CAR * 100,
+      3
+    )
+  )
+
+
+task3_report_table
+
+wide_window %>%
+  count(SEO_ID, event_day) %>%
+  filter(n > 1)
+
+wide_window %>%
+  group_by(event_day) %>%
+  summarise(
+    rows = n(),
+    unique_events = n_distinct(SEO_ID)
+  )
+
+event_history %>%
+  count(SEO_ID, event_day) %>%
+  filter(n > 1)
+
