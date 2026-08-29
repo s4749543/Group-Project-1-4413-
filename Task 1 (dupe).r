@@ -9,6 +9,13 @@
 # ============================================================
 
 
+
+## Need to:
+    # Add summarys after each task (not at the end)
+    # clean up code and remove unnecessary comments
+    # clea up summary tables and make them more readable / presentable using kableExtra and other packages
+
+
 # ============================================================
 # 0. PACKAGES
 # ============================================================
