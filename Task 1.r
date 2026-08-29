@@ -280,26 +280,37 @@ event_history %>%
   arrange(SEO_ID, event_day)
 
 # ============================================================
-# TASK 1 SUMMARY STATISTICS
+# TASK 1 SUMMARY STATISTICS - CORRECTED VERSION
 # ============================================================
 
+
 # ------------------------------------------------------------
-# A. Events per firm
+# A. Count SEO events per firm
 # ------------------------------------------------------------
+
+# IMPORTANT:
+# Use PERMNO only as the firm identifier.
+# Do not group by company name because the same PERMNO may appear
+# under slightly different issuer names.
 
 events_per_firm <- seo_events_matched %>%
   count(
     PERMNO,
-    Issuer_Borrower_Name_Full,
     name = "number_of_SEOs"
   )
 
-# Number of firms with more than one SEO
+
+# Number of firms that completed more than one SEO
 firms_multiple_events <- events_per_firm %>%
   filter(number_of_SEOs > 1)
 
+number_firms_multiple_SEOs <- nrow(firms_multiple_events)
+
+
 # Number of repeat SEO events beyond each firm's first SEO
-repeat_SEO_events <- sum(events_per_firm$number_of_SEOs - 1)
+repeat_SEO_events <- sum(
+  events_per_firm$number_of_SEOs - 1
+)
 
 
 # ------------------------------------------------------------
@@ -307,7 +318,10 @@ repeat_SEO_events <- sum(events_per_firm$number_of_SEOs - 1)
 # ------------------------------------------------------------
 
 tight_window_check <- event_history %>%
-  filter(event_day >= -2, event_day <= 2) %>%
+  filter(
+    event_day >= -2,
+    event_day <= 2
+  ) %>%
   group_by(SEO_ID) %>%
   summarise(
     n_days = n_distinct(event_day),
@@ -322,7 +336,9 @@ tight_window_check <- event_history %>%
     .groups = "drop"
   )
 
-number_complete_tight <- sum(tight_window_check$complete_tight)
+number_complete_tight <- sum(
+  tight_window_check$complete_tight
+)
 
 
 # ------------------------------------------------------------
@@ -330,7 +346,10 @@ number_complete_tight <- sum(tight_window_check$complete_tight)
 # ------------------------------------------------------------
 
 wide_window_check <- event_history %>%
-  filter(event_day >= -10, event_day <= 10) %>%
+  filter(
+    event_day >= -10,
+    event_day <= 10
+  ) %>%
   group_by(SEO_ID) %>%
   summarise(
     n_days = n_distinct(event_day),
@@ -345,7 +364,9 @@ wide_window_check <- event_history %>%
     .groups = "drop"
   )
 
-number_complete_wide <- sum(wide_window_check$complete_wide)
+number_complete_wide <- sum(
+  wide_window_check$complete_wide
+)
 
 
 # ------------------------------------------------------------
@@ -382,15 +403,22 @@ task1_summary <- tibble(
 
   Value = c(
     n_distinct(seo_events_matched$SEO_ID),
+
     n_distinct(seo_events_matched$PERMNO),
-    nrow(firms_multiple_events),
+
+    number_firms_multiple_SEOs,
+
     repeat_SEO_events,
+
     number_complete_tight,
+
     number_complete_wide,
+
     sum(
       seo_events_matched$day0_calendar_gap == 0,
       na.rm = TRUE
     ),
+
     sum(
       seo_events_matched$day0_calendar_gap > 0,
       na.rm = TRUE
@@ -399,12 +427,8 @@ task1_summary <- tibble(
 )
 
 
-# View summary
-task1_summary
-
-
 # ------------------------------------------------------------
-# F. Add yearly event counts to the summary table
+# F. Add yearly event counts
 # ------------------------------------------------------------
 
 year_summary <- events_by_year %>%
@@ -417,16 +441,18 @@ year_summary <- events_by_year %>%
   )
 
 
-# Combine everything into one table
+# ------------------------------------------------------------
+# G. Combine into final Task 1 summary
+# ------------------------------------------------------------
+
 task1_full_summary <- bind_rows(
   task1_summary,
   year_summary
 )
 
 
-# View final Task 1 summary table
+# View final table
 task1_full_summary
-
 
 # ------------------------------------------------------------
 # 24. Save the processed data
