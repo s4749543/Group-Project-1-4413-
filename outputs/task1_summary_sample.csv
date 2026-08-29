@@ -1,0 +1,7 @@
+Statistic,Value
+SEO events in original sample,500
+SEO events successfully matched,500
+Unique firms,424
+Firms with more than one SEO,61
+Events where filing date = Day 0,493
+Events where Day 0 occurs after filing date,7
