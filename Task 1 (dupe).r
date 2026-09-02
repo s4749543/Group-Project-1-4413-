@@ -1335,3 +1335,712 @@ ggsave(
   height = 5,
   dpi = 300
 )
+
+
+# ============================================================
+# TASK 4
+# ANNOUNCEMENT CAR AND OFFERING DILUTION
+# ============================================================
+
+
+# ============================================================
+# 37. CALCULATE ABNORMAL RETURNS IN THE TIGHT WINDOW
+# ============================================================
+
+# AR_i,t = stock return - S&P 500 return
+
+tight_window_final <- tight_window_final %>%
+  mutate(
+    AR = DLYRET - SPRTRN
+  )
+
+
+# ============================================================
+# 38. CALCULATE EACH EVENT'S (-2,+2) ANNOUNCEMENT CAR
+# ============================================================
+
+# Each SEO should have exactly five observations:
+# -2, -1, 0, +1, +2
+
+event_CAR <- tight_window_final %>%
+  group_by(SEO_ID) %>%
+  summarise(
+
+    PERMNO = first(PERMNO),
+
+    Issuer_Borrower_Name_Full =
+      first(Issuer_Borrower_Name_Full),
+
+    filing_dt = first(filing_dt),
+
+    Gross_Proceeds =
+      first(Gross_Proceeds),
+
+    utility_flag =
+      first(utility_flag),
+
+    financial_flag =
+      first(financial_flag),
+
+    realestate_flag =
+      first(realestate_flag),
+
+    announcement_CAR =
+      sum(AR),
+
+    .groups = "drop"
+  )
+
+
+# Inspect
+head(event_CAR)
+
+
+# ============================================================
+# 39. TASK 4A - SUMMARY OF ANNOUNCEMENT CAR
+# ============================================================
+
+task4_CAR_summary <- event_CAR %>%
+  summarise(
+
+    N = n(),
+
+    mean_CAR =
+      mean(
+        announcement_CAR,
+        na.rm = TRUE
+      ),
+
+    median_CAR =
+      median(
+        announcement_CAR,
+        na.rm = TRUE
+      ),
+
+    sd_CAR =
+      sd(
+        announcement_CAR,
+        na.rm = TRUE
+      ),
+
+    se_CAR =
+      sd_CAR / sqrt(N),
+
+    t_stat =
+      mean_CAR / se_CAR,
+
+    p_value =
+      2 * pt(
+        -abs(t_stat),
+        df = N - 1
+      )
+  )
+
+
+task4_CAR_summary
+
+# ============================================================
+# 40. BUILT-IN ONE-SAMPLE T-TEST
+# ============================================================
+
+task4_ttest <- t.test(
+  event_CAR$announcement_CAR,
+  mu = 0,
+  alternative = "two.sided"
+)
+
+task4_ttest
+
+# ============================================================
+# 41. EXTRACT MARKET EQUITY ON EVENT DAY -11
+# ============================================================
+
+market_equity_day11 <- event_history %>%
+
+  filter(
+    event_day == -11
+  ) %>%
+
+  transmute(
+
+    SEO_ID,
+
+    PERMNO,
+
+    price_day_minus_11 =
+      abs(DLYPRC),
+
+    SHROUT_day_minus_11 =
+      SHROUT,
+
+    # SHROUT is reported in thousands of shares
+    market_equity_day_minus_11 =
+      abs(DLYPRC) * SHROUT * 1000
+  )
+
+
+# Check one row per SEO
+market_equity_day11 %>%
+  count(SEO_ID) %>%
+  filter(n > 1)
+
+nrow(market_equity_day11)
+
+n_distinct(market_equity_day11$SEO_ID)
+
+# ============================================================
+# 42. MERGE CAR WITH PRE-ANNOUNCEMENT MARKET EQUITY
+# ============================================================
+
+task4_event_data <- event_CAR %>%
+
+  left_join(
+    market_equity_day11,
+    by = c(
+      "SEO_ID",
+      "PERMNO"
+    )
+  )
+
+# ============================================================
+# 43. CALCULATE OFFERING DILUTION
+# ============================================================
+
+task4_event_data <- task4_event_data %>%
+
+  mutate(
+
+    dilution =
+      (
+        announcement_CAR *
+        market_equity_day_minus_11
+      ) /
+      Gross_Proceeds
+  )
+  # Check Missing values
+task4_event_data %>%
+  summarise(
+    missing_CAR =
+      sum(is.na(announcement_CAR)),
+
+    missing_market_equity =
+      sum(is.na(market_equity_day_minus_11)),
+
+    missing_gross_proceeds =
+      sum(is.na(Gross_Proceeds)),
+
+    zero_gross_proceeds =
+      sum(
+        Gross_Proceeds == 0,
+        na.rm = TRUE
+      )
+  )
+
+
+# ============================================================
+# 44. TASK 4B - DILUTION SUMMARY
+# ============================================================
+
+task4_dilution_summary <- task4_event_data %>%
+
+  filter(
+    !is.na(dilution),
+    is.finite(dilution)
+  ) %>%
+
+  summarise(
+
+    N = n(),
+
+    mean_dilution =
+      mean(dilution),
+
+    median_dilution =
+      median(dilution),
+
+    sd_dilution =
+      sd(dilution),
+
+    min_dilution =
+      min(dilution),
+
+    max_dilution =
+      max(dilution)
+  )
+
+
+task4_dilution_summary
+
+task4_report_summary <- tibble(
+
+  Statistic = c(
+    "Number of usable events",
+    "Mean announcement CAR (%)",
+    "Median announcement CAR (%)",
+    "CAR t-statistic",
+    "CAR p-value",
+    "Mean offering dilution (%)",
+    "Median offering dilution (%)"
+  ),
+
+  Value = c(
+
+    task4_CAR_summary$N,
+
+    task4_CAR_summary$mean_CAR * 100,
+
+    task4_CAR_summary$median_CAR * 100,
+
+    task4_CAR_summary$t_stat,
+
+    task4_CAR_summary$p_value,
+
+    task4_dilution_summary$mean_dilution * 100,
+
+    task4_dilution_summary$median_dilution * 100
+  )
+)
+
+
+task4_report_summary
+
+# Small Gross Proceeds Relative to Firm Size
+task4_event_data %>%
+  arrange(dilution) %>%
+  select(
+    SEO_ID,
+    Issuer_Borrower_Name_Full,
+    Gross_Proceeds,
+    market_equity_day_minus_11,
+    announcement_CAR,
+    dilution
+  ) %>%
+  head(10)
+
+
+task4_event_data %>%
+  arrange(desc(dilution)) %>%
+  select(
+    SEO_ID,
+    Issuer_Borrower_Name_Full,
+    Gross_Proceeds,
+    market_equity_day_minus_11,
+    announcement_CAR,
+    dilution
+  ) %>%
+  head(10)
+
+# ============================================================
+# TASK 5
+# INDUSTRIAL VS UTILITY ISSUERS
+# ============================================================
+
+
+# ============================================================
+# 45. CREATE INDUSTRY GROUP LABEL
+# ============================================================
+
+task5_data <- task4_event_data %>%
+
+  filter(
+    !is.na(announcement_CAR),
+    !is.na(utility_flag)
+  ) %>%
+
+  mutate(
+
+    issuer_group =
+      if_else(
+        utility_flag == 1,
+        "Utility",
+        "Non-utility"
+      )
+  )
+
+# ============================================================
+# 46. GROUP SUMMARY STATISTICS
+# ============================================================
+
+task5_summary <- task5_data %>%
+
+  group_by(issuer_group) %>%
+
+  summarise(
+
+    N = n(),
+
+    mean_CAR =
+      mean(
+        announcement_CAR
+      ),
+
+    median_CAR =
+      median(
+        announcement_CAR
+      ),
+
+    sd_CAR =
+      sd(
+        announcement_CAR
+      ),
+
+    .groups = "drop"
+  )
+
+
+task5_summary
+
+task5_report_table <- task5_summary %>%
+
+  transmute(
+
+    Group =
+      issuer_group,
+
+    N,
+
+    `Mean CAR (%)` =
+      round(
+        mean_CAR * 100,
+        3
+      ),
+
+    `Median CAR (%)` =
+      round(
+        median_CAR * 100,
+        3
+      ),
+
+    `Standard Deviation (%)` =
+      round(
+        sd_CAR * 100,
+        3
+      )
+  )
+
+
+task5_report_table
+
+# ============================================================
+# 47. WELCH TWO-SAMPLE T-TEST
+# ============================================================
+
+task5_ttest <- t.test(
+
+  announcement_CAR ~ issuer_group,
+
+  data = task5_data,
+
+  alternative = "two.sided",
+
+  var.equal = FALSE
+)
+
+
+task5_ttest
+
+task5_test_summary <- tibble(
+
+  Statistic = c(
+    "Welch t-statistic",
+    "Degrees of freedom",
+    "p-value"
+  ),
+
+  Value = c(
+    unname(task5_ttest$statistic),
+    unname(task5_ttest$parameter),
+    task5_ttest$p.value
+  )
+)
+
+
+task5_test_summary
+
+task5_summary %>%
+  select(
+    issuer_group,
+    N,
+    sd_CAR
+  )
+
+# ============================================================
+# 48. TASK 5 GRAPH
+# ============================================================
+
+task5_plot <- ggplot(
+
+  task5_data,
+
+  aes(
+    x = issuer_group,
+    y = announcement_CAR * 100
+  )
+
+) +
+
+  geom_boxplot() +
+
+  geom_hline(
+    yintercept = 0,
+    linetype = "dashed"
+  ) +
+
+  labs(
+    title =
+      "Announcement CARs: Utility vs Non-Utility Issuers",
+
+    x =
+      NULL,
+
+    y =
+      "Announcement CAR (-2,+2) (%)"
+  ) +
+
+  theme_minimal()
+
+
+task5_plot
+
+# ============================================================
+# TASK 6
+# OFFER SIZE AND MARKET REACTION
+# ============================================================
+
+
+# ============================================================
+# 49. CALCULATE RELATIVE OFFERING SIZE
+# ============================================================
+
+task6_data <- task4_event_data %>%
+
+  mutate(
+
+    offer_size =
+      Gross_Proceeds /
+      market_equity_day_minus_11
+  ) %>%
+
+  filter(
+
+    !is.na(announcement_CAR),
+
+    !is.na(offer_size),
+
+    is.finite(offer_size),
+
+    offer_size > 0
+  )
+
+# Inspect It
+
+task6_data %>%
+
+  select(
+    SEO_ID,
+    Issuer_Borrower_Name_Full,
+    Gross_Proceeds,
+    market_equity_day_minus_11,
+    offer_size,
+    announcement_CAR
+  ) %>%
+
+  head(20)
+
+# Descriptive statistics
+task6_data %>%
+
+  summarise(
+
+    N = n(),
+
+    mean_offer_size =
+      mean(offer_size),
+
+    median_offer_size =
+      median(offer_size),
+
+    min_offer_size =
+      min(offer_size),
+
+    max_offer_size =
+      max(offer_size)
+  )
+
+# ============================================================
+# 50. OLS REGRESSION
+#
+# CAR_i = alpha + beta * OfferSize_i + error_i
+# ============================================================
+
+task6_model <- lm(
+
+  announcement_CAR ~ offer_size,
+
+  data = task6_data
+)
+
+
+summary(task6_model)
+
+library(broom)
+
+
+task6_coefficients <- tidy(
+  task6_model
+)
+
+
+task6_coefficients
+
+# ============================================================
+# 51. TASK 6 SCATTERPLOT AND OLS LINE
+# ============================================================
+
+task6_plot <- ggplot(
+
+  task6_data,
+
+  aes(
+    x = offer_size * 100,
+    y = announcement_CAR * 100
+  )
+
+) +
+
+  geom_point(
+    alpha = 0.5
+  ) +
+
+  geom_smooth(
+    method = "lm",
+    se = TRUE
+  ) +
+
+  geom_hline(
+    yintercept = 0,
+    linetype = "dashed"
+  ) +
+
+  labs(
+
+    title =
+      "Relative Offering Size and SEO Announcement CAR",
+
+    x =
+      "Offer Size (% of Pre-Announcement Market Equity)",
+
+    y =
+      "Announcement CAR (-2,+2) (%)"
+  ) +
+
+  theme_minimal()
+
+
+task6_plot
+
+# Check for Extremes
+
+task6_data %>%
+
+  arrange(
+    desc(offer_size)
+  ) %>%
+
+  select(
+    SEO_ID,
+    Issuer_Borrower_Name_Full,
+    offer_size,
+    announcement_CAR,
+    Gross_Proceeds,
+    market_equity_day_minus_11
+  ) %>%
+
+  head(20)
+
+task6_diagnostics <- task6_data %>%
+
+  mutate(
+    cooks_distance =
+      cooks.distance(task6_model)
+  )
+
+
+task6_diagnostics %>%
+
+  arrange(
+    desc(cooks_distance)
+  ) %>%
+
+  select(
+    SEO_ID,
+    Issuer_Borrower_Name_Full,
+    offer_size,
+    announcement_CAR,
+    cooks_distance
+  ) %>%
+
+  head(10)
+
+# ============================================================
+# 52. SAVE TASKS 4-6 OUTPUTS
+# ============================================================
+
+write_csv(
+  event_CAR,
+  "outputs/task4_event_CAR.csv"
+)
+
+
+write_csv(
+  task4_event_data,
+  "outputs/task4_event_data.csv"
+)
+
+
+write_csv(
+  task4_report_summary,
+  "outputs/task4_summary.csv"
+)
+
+
+write_csv(
+  task5_report_table,
+  "outputs/task5_group_summary.csv"
+)
+
+
+write_csv(
+  task5_test_summary,
+  "outputs/task5_ttest.csv"
+)
+
+
+write_csv(
+  task6_data,
+  "outputs/task6_regression_data.csv"
+)
+
+
+write_csv(
+  task6_report_table,
+  "outputs/task6_regression_summary.csv"
+)
+
+
+ggsave(
+  "outputs/task5_utility_comparison.png",
+  plot = task5_plot,
+  width = 7,
+  height = 5,
+  dpi = 300
+)
+
+
+ggsave(
+  "outputs/task6_offer_size_regression.png",
+  plot = task6_plot,
+  width = 8,
+  height = 5,
+  dpi = 300
+)
